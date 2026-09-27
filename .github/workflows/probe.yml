@@ -23,7 +23,6 @@ jobs:
       - name: 2) Get prjxray-db + prjxray (+ record paths)
         run: |
           set +e
-          git clone --depth 1 https://github.com/f4pga/prjjxray-db.git  /dev/null 2>/dev/null # placeholder guard
           git clone --depth 1 https://github.com/f4pga/prjxray-db.git  "$RUNNER_TEMP/db"
           git clone --depth 1 https://github.com/f4pga/prjxray.git     "$RUNNER_TEMP/prjxray"
           echo "DB_ROOT=$RUNNER_TEMP/db/$FAMILY" >> $GITHUB_ENV
