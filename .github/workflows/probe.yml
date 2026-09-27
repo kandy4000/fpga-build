@@ -1,4 +1,4 @@
-name: probe
+name: probe2
 on: [workflow_dispatch]
 jobs:
   probe:
@@ -9,32 +9,69 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install OSS CAD Suite
+      - name: 1) Install OSS CAD Suite (+ record paths)
         run: |
+          set +e
           URL=$(curl -s https://api.github.com/repos/YosysHQ/oss-cad-suite-build/releases/latest \
                 | jq -r '.assets[] | select(.name | contains("linux-x64") and endswith(".tgz")) | .browser_download_url')
           curl -L "$URL" -o oss.tgz && tar xzf oss.tgz
-          [ -f oss-cad-suite/environment ] && source oss-cad-suite/environment || true
-          echo "$PWD/oss-cad-suite/bin" >> $GITHUB_PATH
+          echo "OSS_BIN=$GITHUB_WORKSPACE/oss-cad-suite/bin" >> $GITHUB_ENV
+          echo "== bins matching nextpnr/yosys/fasm/bit =="
+          ls "$GITHUB_WORKSPACE/oss-cad-suite/bin" | grep -iE 'nextpnr|yosys|fasm|bit' || echo "(none matched)"
+          true
 
-      - name: Get prjxray-db + prjxray
-        run: |
-          git clone --depth 1 https://github.com/f4pga/prjxray-db.git  $RUNNER_TEMP/db
-          git clone --depth 1 https://github.com/f4pga/prjxray.git     $RUNNER_TEMP/prjxray
-
-      - name: Does my part exist in db?
-        run: |
-          echo "== spartan7 dirs in db =="
-          ls $RUNNER_TEMP/db/$FAMILY 2>/dev/null || echo "(no such family dir)"
-          echo "== parts under $FAMILY =="
-          ls $RUNNER_TEMP/db/$FAMILY/parts 2>/dev/null || echo "(no parts subdir, see above)"
-          echo "== grep '$PART_QUERY' =="
-          ls $RUNNER_TEMP/db/$FAMILY/parts 2>/dev/null | grep "$PART_QUERY" || echo ">>> NOT FOUND <<<"
-
-      - name: Tool self-docs
+      - name: 2) Get prjxray-db + prjxray (+ record paths)
         run: |
           set +e
-          echo "===== yosys =====";         yosys -V
-          echo "===== nextpnr-xilinx ====="; nextpnr-xilinx --version 2>&1; nextpnr-xilinx --help 2>&1
-          echo "===== fasm2frames =====";   python3 $RUNNER_TEMP/prjxray/utils/fasm2frames.py  --help 2>&1
-          echo "===== xc7frames2bit ====="; python3 $RUNNER_TEMP/prjxray/utils/xc7frames2bit.py --help 2>&1
+          git clone --depth 1 https://github.com/f4pga/prjjxray-db.git  /dev/null 2>/dev/null # placeholder guard
+          git clone --depth 1 https://github.com/f4pga/prjxray-db.git  "$RUNNER_TEMP/db"
+          git clone --depth 1 https://github.com/f4pga/prjxray.git     "$RUNNER_TEMP/prjxray"
+          echo "DB_ROOT=$RUNNER_TEMP/db/$FAMILY" >> $GITHUB_ENV
+          echo "PRJXRAY=$RUNNER_TEMP/prjxray" >> $GITHUB_ENV
+          true
+
+      - name: 3) A. Is xc7s15 in the db? (GO/NO-GO)
+        run: |
+          set +e
+          echo "== top of db =="; ls "$RUNNER_TEMP/db" || true
+          echo "== DB_ROOT=$DB_ROOT =="; ls "$DB_ROOT" || echo "(DB_ROOT missing -> family dir name differs)"
+          echo "== dirs matching PART_QUERY =="
+          find "$RUNNER_TEMP/db" -maxdepth 3 -type d -iname "*$PART_QUERY*" || echo ">>> NO xc7s15 dir anywhere <<<"
+          echo "== any part.yaml locations (sample) =="
+          find "$RUNNER_TEMP/db" -maxdepth 4 -name 'part.yaml' | head -20 || true
+          true
+
+      - name: 4) B. Enumerate real nextpnr binaries + their --help
+        run: |
+          set +e
+          echo "== nextpnr* in OSS_BIN =="
+          ls "$OSS_BIN" | grep -i nextpnr || echo "(no nextpnr binary shipped!)"
+          for b in $(ls "$OSS_BIN" | grep -i nextpnr); do
+            echo "######## $b --help ########"
+            "$OSS_BIN/$b" --help 2>&1 | head -60 || true
+          done
+          true
+
+      - name: 5) C. Find real fasm/bit scripts + fix python 'fasm' dep
+        run: |
+          set +e
+          echo "== candidate scripts in prjxray =="
+          find "$PRJXRAY" -maxdepth 4 -name '*.py' | grep -iE 'fasm2frames|frames2bit|bit2|xc7.*bit' || echo "(none found)"
+          echo "== import fasm: system python =="
+          python3 -c "import fasm; print('OK', fasm.__file__)" 2>&1 || echo "sys python: NO fasm"
+          echo "== import fasm: oss-cad-suite python =="
+          "$OSS_BIN/python3" -c "import fasm; print('OK', fasm.__file__)" 2>&1 || echo "oss python: NO fasm"
+          echo "== try installing fasm =="
+          python3 -m pip install --break-system-packages fasm 2>&1 | tail -3 || true
+          python3 -c "import fasm; print('after-pip sys OK')" 2>&1 || echo "after-pip sys STILL NO"
+          true
+
+      - name: 6) D. --help of whatever scripts were found
+        run: |
+          set +e
+          while IFS= read -r f; do
+            echo "######## $f --help ########"
+            python3 "$f" --help 2>&1 | head -40 || true
+            "$OSS_BIN/python3" "$f" --help 2>&1 | head -40 || true
+          done < <(find "$PRJXRAY" -maxdepth 4 -name '*.py' | grep -iE 'fasm2frames|frames2bit|bit')
+          true
