@@ -1,0 +1,40 @@
+name: probe
+on: [workflow_dispatch]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      FAMILY: spartan7
+      PART_QUERY: xc7s15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OSS CAD Suite
+        run: |
+          URL=$(curl -s https://api.github.com/repos/YosysHQ/oss-cad-suite-build/releases/latest \
+                | jq -r '.assets[] | select(.name | contains("linux-x64") and endswith(".tgz")) | .browser_download_url')
+          curl -L "$URL" -o oss.tgz && tar xzf oss.tgz
+          [ -f oss-cad-suite/environment ] && source oss-cad-suite/environment || true
+          echo "$PWD/oss-cad-suite/bin" >> $GITHUB_PATH
+
+      - name: Get prjxray-db + prjxray
+        run: |
+          git clone --depth 1 https://github.com/f4pga/prjxray-db.git  $RUNNER_TEMP/db
+          git clone --depth 1 https://github.com/f4pga/prjxray.git     $RUNNER_TEMP/prjxray
+
+      - name: Does my part exist in db?
+        run: |
+          echo "== spartan7 dirs in db =="
+          ls $RUNNER_TEMP/db/$FAMILY 2>/dev/null || echo "(no such family dir)"
+          echo "== parts under $FAMILY =="
+          ls $RUNNER_TEMP/db/$FAMILY/parts 2>/dev/null || echo "(no parts subdir, see above)"
+          echo "== grep '$PART_QUERY' =="
+          ls $RUNNER_TEMP/db/$FAMILY/parts 2>/dev/null | grep "$PART_QUERY" || echo ">>> NOT FOUND <<<"
+
+      - name: Tool self-docs
+        run: |
+          set +e
+          echo "===== yosys =====";         yosys -V
+          echo "===== nextpnr-xilinx ====="; nextpnr-xilinx --version 2>&1; nextpnr-xilinx --help 2>&1
+          echo "===== fasm2frames =====";   python3 $RUNNER_TEMP/prjxray/utils/fasm2frames.py  --help 2>&1
+          echo "===== xc7frames2bit ====="; python3 $RUNNER_TEMP/prjxray/utils/xc7frames2bit.py --help 2>&1
